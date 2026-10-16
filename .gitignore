@@ -1,0 +1,6 @@
+# downloads, image builds, local renders
+dl/
+build/
+mnt/
+*.png
+__pycache__/

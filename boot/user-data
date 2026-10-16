@@ -1,0 +1,20 @@
+#cloud-config
+hostname: a206
+manage_etc_hosts: true
+timezone: Europe/Paris
+
+users:
+  - name: pi
+    groups: [sudo, audio, adm]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - __SSH_PUBKEY__   # filled in by tools/build-image.sh
+
+ssh_pwauth: false
+enable_ssh: true
+
+runcmd:
+  - [systemctl, enable, --now, ssh]
+  - [bash, /boot/firmware/spotify-setup.sh]
