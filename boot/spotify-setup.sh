@@ -82,7 +82,7 @@ apt-get -y install cpufrequtils || true
 echo 'GOVERNOR="performance"' > /etc/default/cpufrequtils
 
 # --- Now-playing display on HDMI (files shipped in $BOOT/display/) ---
-apt-get -y install python3-pygame fonts-dejavu-core
+apt-get -y install python3-pygame fonts-dejavu-core libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri libgbm1
 install -m755 "$BOOT"/display/nowplaying-event "$BOOT"/display/nowplaying.py /usr/local/bin/
 install -m644 "$BOOT"/display/nowplaying.service /etc/systemd/system/
 install -m644 "$BOOT"/display/raspotify-display.conf /etc/systemd/system/raspotify.service.d/display.conf
