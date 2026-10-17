@@ -1,7 +1,8 @@
 #cloud-config
-hostname: a206
+# __PLACEHOLDERS__ are filled in by tools/build-image.sh
+hostname: __HOSTNAME__
 manage_etc_hosts: true
-timezone: Europe/Paris
+timezone: __TIMEZONE__
 
 users:
   - name: pi
@@ -10,7 +11,7 @@ users:
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     lock_passwd: true
     ssh_authorized_keys:
-      - __SSH_PUBKEY__   # filled in by tools/build-image.sh
+      - __SSH_PUBKEY__
 
 ssh_pwauth: false
 enable_ssh: true

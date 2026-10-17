@@ -5,11 +5,18 @@ set -euo pipefail
 exec > >(tee -a /var/log/spotify-setup.log) 2>&1
 echo "=== spotify-setup start $(date -Is) ==="
 
-SPEAKER_NAME="A206"
 BOOT=/boot/firmware
+# Build-time settings written by tools/build-image.sh
+SPEAKER_NAME="A206"
+WIFI_SSID=""
+WIFI_COUNTRY="FR"
+# shellcheck source=/dev/null
+[ -f "$BOOT/a206.conf" ] && . "$BOOT/a206.conf"
 export DEBIAN_FRONTEND=noninteractive
 
-# Wait for Ethernet + DNS (up to ~5 min)
+if [ -n "$WIFI_SSID" ]; then raspi-config nonint do_wifi_country "$WIFI_COUNTRY" || true; fi
+
+# Wait for Ethernet/Wi-Fi + DNS (up to ~5 min)
 for i in $(seq 1 60); do
   getent hosts deb.debian.org >/dev/null && break
   echo "waiting for network ($i)..."; sleep 5
@@ -73,8 +80,10 @@ Nice=-10
 EOF
 
 # --- Appliance lockdown: strip what a speaker doesn't need ---
-systemctl disable --now bluetooth.service hciuart.service wpa_supplicant.service \
+systemctl disable --now bluetooth.service hciuart.service \
   ModemManager.service triggerhappy.service cups.service 2>/dev/null || true
+# NetworkManager needs wpa_supplicant for Wi-Fi
+[ -n "$WIFI_SSID" ] || systemctl disable --now wpa_supplicant.service 2>/dev/null || true
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer man-db.timer 2>/dev/null || true
 systemctl enable avahi-daemon.service raspotify.service
 # (CPU governor is set to performance on the kernel cmdline by build-image.sh)
@@ -87,6 +96,13 @@ install -m644 "$BOOT"/display/raspotify-display.conf /etc/systemd/system/raspoti
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl enable nowplaying.service
 
+# --- a206-config: SSH TUI for output, format, rate, names, display ---
+apt-get -y install whiptail libasound2-plugins   # speexrate resampler for non-44.1k rates
+install -m755 "$BOOT"/system/a206-config /usr/local/sbin/
+mkdir -p /etc/a206
+printf 'OUT_DEVICE="%s"\nOUT_RATE="44100"\n' "$DEVICE" > /etc/a206/settings
+printf '\n  %s: Spotify Connect speaker.  Settings:  sudo a206-config\n\n' "$SPEAKER_NAME" > /etc/motd
+
 systemctl daemon-reload
 systemctl restart raspotify.service || true
 
@@ -94,6 +110,8 @@ systemctl restart raspotify.service || true
 #   sudo raspi-config nonint disable_overlayfs && sudo reboot
 raspi-config nonint enable_overlayfs || echo "WARN: overlayfs not enabled"
 
+# Setup is done: stop cloud-init from reapplying user-data (e.g. the hostname)
+touch /etc/cloud/cloud-init.disabled
 touch /etc/spotify-setup.done
 echo "=== spotify-setup done $(date -Is), rebooting ==="
 systemctl reboot
