@@ -3,7 +3,7 @@
 # Reads state written by /usr/local/bin/nowplaying-event (librespot --onevent).
 import io, json, os, threading, time, urllib.request
 
-os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
+os.environ["SDL_VIDEODRIVER"] = "dummy"  # render off-screen, push frames to /dev/fb0
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
@@ -74,9 +74,19 @@ def main():
     pygame.display.init()
     pygame.font.init()
     pygame.mouse.set_visible(False)
-    info = pygame.display.Info()
-    W, H = info.current_w or 1024, info.current_h or 768
-    screen = pygame.display.set_mode((W, H), pygame.FULLSCREEN)
+    W, H = (int(x) for x in open("/sys/class/graphics/fb0/virtual_size").read().split(","))
+    bpp = int(open("/sys/class/graphics/fb0/bits_per_pixel").read())
+    pygame.display.set_mode((1, 1))
+    screen = pygame.Surface((W, H))
+    out = pygame.Surface((W, H), 0, bpp)  # 16 bpp = RGB565, matches vc4drmfb
+    fb = open("/dev/fb0", "r+b", buffering=0)
+    with open("/sys/class/graphics/fbcon/cursor_blink", "w") as f:
+        f.write("0")
+
+    def flip():
+        out.blit(screen, (0, 0))
+        fb.seek(0)
+        fb.write(out.get_buffer().raw)
     u = H / 100
     f_title = pygame.font.Font(FONT_B, int(6.5 * u))
     f_artist = pygame.font.Font(FONT, int(4.6 * u))
@@ -104,7 +114,7 @@ def main():
             screen.blit(s, s.get_rect(center=(W // 2, H * 0.62)))
             s = f_small.render("Select this speaker in the Spotify app", True, DIM)
             screen.blit(s, s.get_rect(center=(W // 2, H * 0.70)))
-            pygame.display.flip()
+            flip()
             clock.tick(1)
             continue
 
@@ -153,7 +163,7 @@ def main():
         s = f_small.render(status, True, ACCENT)
         screen.blit(s, (ax, int(3 * u)))
 
-        pygame.display.flip()
+        flip()
         clock.tick(4)
 
 

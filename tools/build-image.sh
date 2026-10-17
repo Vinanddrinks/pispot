@@ -46,8 +46,9 @@ sudo sed -i 's/^dtparam=audio=on/dtparam=audio=off/' "$MNT/config.txt"
 grep -q disable-wifi "$MNT/config.txt" || printf '%s\n' \
   '# Spotify speaker: HDMI audio only, radios off (Ethernet)' \
   'dtoverlay=disable-wifi' 'dtoverlay=disable-bt' | sudo tee -a "$MNT/config.txt" >/dev/null
-# Keep HDMI (and its audio) up even if the TV is off at boot
-grep -q force_hotplug "$MNT/cmdline.txt" || sudo sed -i '1 s/$/ vc4.force_hotplug=1/' "$MNT/cmdline.txt"
+# Keep HDMI up with the TV off at boot, never blank the console/now-playing
+# screen, hide the cursor
+grep -q force_hotplug "$MNT/cmdline.txt" || sudo sed -i '1 s/$/ vc4.force_hotplug=1 consoleblank=0 vt.global_cursor_default=0/' "$MNT/cmdline.txt"
 
 sync
 cleanup
