@@ -15,7 +15,14 @@ for i in $(seq 1 60); do
   echo "waiting for network ($i)..."; sleep 5
 done
 
-apt-get update
+# Captive portals (e.g. the campus network login) make apt fetch HTML instead of
+# package lists, so retry until apt works for real (up to ~2 h)
+for i in $(seq 1 120); do
+  rm -rf /var/lib/apt/lists/*
+  apt-get update 2>&1 | tee /tmp/apt-update.log
+  grep -qE '^(E|W): ' /tmp/apt-update.log || break
+  echo "apt not usable yet (captive portal?), retry $i in 60s"; sleep 60
+done
 apt-get -y -o Dpkg::Options::=--force-confold full-upgrade
 # raspotify .deb was shipped on the boot partition; apt pulls the missing deps (libpulse0)
 apt-get -y install "$BOOT"/raspotify_*.deb
