@@ -77,9 +77,7 @@ systemctl disable --now bluetooth.service hciuart.service wpa_supplicant.service
   ModemManager.service triggerhappy.service cups.service 2>/dev/null || true
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer man-db.timer 2>/dev/null || true
 systemctl enable avahi-daemon.service raspotify.service
-# Performance CPU governor (avoids clock-scaling glitches)
-apt-get -y install cpufrequtils || true
-echo 'GOVERNOR="performance"' > /etc/default/cpufrequtils
+# (CPU governor is set to performance on the kernel cmdline by build-image.sh)
 
 # --- Now-playing display on HDMI (files shipped in $BOOT/display/) ---
 apt-get -y install python3-pygame fonts-dejavu-core fonts-noto-cjk python3-fonttools libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri libgbm1

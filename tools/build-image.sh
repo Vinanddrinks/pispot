@@ -47,8 +47,8 @@ grep -q disable-wifi "$MNT/config.txt" || printf '%s\n' \
   '# Spotify speaker: HDMI audio only, radios off (Ethernet)' \
   'dtoverlay=disable-wifi' 'dtoverlay=disable-bt' | sudo tee -a "$MNT/config.txt" >/dev/null
 # Keep HDMI up with the TV off at boot, never blank the console/now-playing
-# screen, hide the cursor
-grep -q force_hotplug "$MNT/cmdline.txt" || sudo sed -i '1 s/$/ vc4.force_hotplug=1 consoleblank=0 vt.global_cursor_default=0/' "$MNT/cmdline.txt"
+# screen, hide the cursor, run the CPU at full clock (no scaling glitches)
+grep -q force_hotplug "$MNT/cmdline.txt" || sudo sed -i '1 s/$/ vc4.force_hotplug=1 consoleblank=0 vt.global_cursor_default=0 cpufreq.default_governor=performance/' "$MNT/cmdline.txt"
 
 sync
 cleanup
