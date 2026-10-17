@@ -30,12 +30,13 @@ apt-get -y install "$BOOT"/raspotify_*.deb
 # --- Pick the HDMI ALSA device and the highest sample format it accepts ---
 DEVICE="hdmi:CARD=vc4hdmi,DEV=0"
 aplay -L | grep -q '^hdmi:CARD=vc4hdmi,DEV=0' || DEVICE="$(aplay -L | grep -m1 '^hdmi:' || echo default)"
-FORMAT=S16
-for f in S32 S24 S16; do
-  if timeout 5 aplay -q -D "$DEVICE" -f "${f}_LE" -r 44100 -c 2 -d 1 /dev/zero 2>/dev/null; then
-    FORMAT=$f; break
-  fi
-done
+# vc4 HDMI takes S32 (sent as 24-bit). The probe only works while the TV is on,
+# so keep S32 unless the probe actively proves only S16 works.
+FORMAT=S32
+if ! timeout 5 aplay -q -D "$DEVICE" -f S32_LE -r 44100 -c 2 -d 1 /dev/zero 2>/dev/null &&
+   timeout 5 aplay -q -D "$DEVICE" -f S16_LE -r 44100 -c 2 -d 1 /dev/zero 2>/dev/null; then
+  FORMAT=S16
+fi
 echo "Using ALSA device=$DEVICE format=$FORMAT"
 
 cat > /etc/raspotify/conf <<EOF
