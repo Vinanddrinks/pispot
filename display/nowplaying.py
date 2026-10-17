@@ -68,16 +68,28 @@ def blurred(img, size):
 class MFont:
     """pygame Font with per-character fallback (DejaVu first, then CJK)."""
 
+    _cmaps = {}
+
     def __init__(self, paths, size):
-        self.fonts = [pygame.font.Font(p, size) for p in paths if os.path.exists(p)]
+        paths = [p for p in paths if os.path.exists(p)]
+        self.fonts = [pygame.font.Font(p, size) for p in paths]
+        # Real glyph coverage (pygame reports metrics even for missing glyphs);
+        # the last font is the catch-all, so its table isn't needed
+        self.cover = [self._cmap(p) for p in paths[:-1]]
+
+    @classmethod
+    def _cmap(cls, path):
+        if path not in cls._cmaps:
+            from fontTools.ttLib import TTFont
+            cls._cmaps[path] = set(TTFont(path, fontNumber=0, lazy=True).getBestCmap())
+        return cls._cmaps[path]
 
     def _runs(self, text):
         runs = []
         for ch in text:
             idx = len(self.fonts) - 1
-            for i, f in enumerate(self.fonts):
-                m = f.metrics(ch)
-                if ch.isspace() or (m and m[0] is not None):
+            for i, cov in enumerate(self.cover):
+                if ch.isspace() or ord(ch) in cov:
                     idx = i
                     break
             if runs and runs[-1][0] == idx:
