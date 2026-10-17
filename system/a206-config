@@ -1,0 +1,413 @@
+#!/bin/bash
+# a206-config: manage the Spotify Connect speaker over SSH.
+#
+#   sudo a206-config                     interactive menu (whiptail)
+#   sudo a206-config status              print current settings
+#   sudo a206-config set KEY VALUE       name | hostname | device | format | rate |
+#                                        bitrate | volume | display
+#   sudo a206-config devices             list ALSA outputs
+#
+# Changes apply live and are also written to the real root filesystem when the
+# read-only overlay is active (via overlayroot-chroot), so they survive reboots.
+set -euo pipefail
+
+ROOT="${A206_ROOT:-}"                 # test hook: operate on a fake tree, no system calls
+CONF="$ROOT/etc/raspotify/conf"
+ASOUND="$ROOT/etc/asound.conf"
+SETTINGS="$ROOT/etc/a206/settings"    # real output device/rate (conf may point at the plug)
+TITLE="A206 speaker"
+PLUG=a206                             # ALSA plug used when resampling
+NATIVE_RATE=44100                     # librespot always decodes Spotify at 44.1 kHz
+
+if [ -z "$ROOT" ] && [ "$EUID" -ne 0 ]; then exec sudo "$0" "$@"; fi
+
+# ---------------------------------------------------------------- helpers ---
+die() { echo "a206-config: $*" >&2; exit 1; }
+sys() { if [ -n "$ROOT" ]; then echo "[dry-run] $*"; else "$@"; fi; }
+
+overlay_active() { [ -z "$ROOT" ] && [ "$(findmnt / -no FSTYPE)" = overlay ]; }
+
+# Copy files from the live (overlay) root down to the real root
+persist() {
+  overlay_active || return 0
+  local f
+  for f in "$@"; do
+    if [ -e "$f" ]; then
+      overlayroot-chroot sh -c "mkdir -p '$(dirname "$f")' && cat > '$f'" < "$f" 2>/dev/null
+    else
+      overlayroot-chroot rm -f "$f" 2>/dev/null
+    fi
+  done
+}
+
+# Run a command live and, with the overlay active, on the real root too
+both() {
+  sys "$@"
+  if overlay_active; then overlayroot-chroot "$@" >/dev/null 2>&1 || true; fi
+}
+
+kv_get() { # file key
+  [ -f "$1" ] || return 0
+  sed -n "s/^$2=//p" "$1" | tail -1 | sed 's/^"\(.*\)"$/\1/'
+}
+
+kv_set() { # file key value
+  mkdir -p "$(dirname "$1")"
+  touch "$1"
+  local line="$2=\"$3\""
+  if grep -q "^$2=" "$1"; then
+    local esc
+    esc=$(printf '%s' "$line" | sed 's/[&|\\]/\\&/g')
+    sed -i "s|^$2=.*|$esc|" "$1"
+  else
+    printf '%s\n' "$line" >> "$1"
+  fi
+}
+
+kv_del() { [ -f "$1" ] && sed -i "/^$2=/d" "$1" || true; }
+
+conf() { kv_get "$CONF" "$1"; }
+
+alsa_fmt() {
+  case "$1" in
+    S16) echo S16_LE ;; S24) echo S24_LE ;; S24_3) echo S24_3LE ;;
+    S32) echo S32_LE ;; F32) echo FLOAT_LE ;; *) die "unknown format $1" ;;
+  esac
+}
+
+out_device() { local d; d=$(kv_get "$SETTINGS" OUT_DEVICE); echo "${d:-$(conf LIBRESPOT_DEVICE)}"; }
+out_rate()   { local r; r=$(kv_get "$SETTINGS" OUT_RATE); echo "${r:-$NATIVE_RATE}"; }
+fmt()        { local f; f=$(conf LIBRESPOT_FORMAT); echo "${f:-S16}"; }
+
+# Can DEVICE open FORMAT at RATE? (librespot must not hold the device)
+probe() { # device format rate
+  [ -n "$ROOT" ] && return 0
+  timeout 5 aplay -q -D "$1" -f "$(alsa_fmt "$2")" -r "$3" -c 2 -d 1 /dev/zero 2>/dev/null
+}
+
+stop_player()    { sys systemctl stop raspotify; }
+restart_player() { sys systemctl restart raspotify; }
+restart_display() {
+  if [ -n "$ROOT" ] || systemctl is-enabled -q nowplaying 2>/dev/null; then sys systemctl restart nowplaying; fi
+}
+
+# Point librespot at the device directly (bit-perfect at 44.1 kHz) or through
+# a resampling plug when another rate is chosen
+apply_output() {
+  local dev rate f
+  dev=$(out_device) rate=$(out_rate) f=$(fmt)
+  [ "$dev" != "$PLUG" ] || die "no real output device recorded; pick one under 'output'"
+  kv_set "$SETTINGS" OUT_DEVICE "$dev"   # remember it before conf points at the plug
+  if [ "$rate" = "$NATIVE_RATE" ]; then
+    kv_set "$CONF" LIBRESPOT_DEVICE "$dev"
+    if [ -f "$ASOUND" ] && grep -q "a206-config" "$ASOUND"; then rm -f "$ASOUND"; fi
+  else
+    local conv='defaults.pcm.rate_converter "speexrate_best"'
+    if [ -z "$ROOT" ] && ! ls /usr/lib/*/alsa-lib/libasound_module_rate_speexrate.so >/dev/null 2>&1; then
+      echo "note: libasound2-plugins missing, ALSA uses its basic linear resampler"
+      conv="# (speexrate unavailable: install libasound2-plugins)"
+    fi
+    cat > "$ASOUND" <<EOF
+# Managed by a206-config: resample librespot's 44.1 kHz output
+$conv
+pcm.$PLUG {
+  type plug
+  slave {
+    pcm "$dev"
+    rate $rate
+    format $(alsa_fmt "$f")
+  }
+}
+EOF
+    kv_set "$CONF" LIBRESPOT_DEVICE "$PLUG"
+  fi
+  persist "$CONF" "$ASOUND" "$SETTINGS"
+}
+
+# --------------------------------------------------------------- settings ---
+set_device() {
+  local dev=$1 rate f
+  rate=$(out_rate) f=$(fmt)
+  stop_player
+  if ! probe "$dev" "$f" "$rate"; then
+    if probe "$dev" S16 "$rate"; then
+      echo "note: $dev does not take $f at $rate Hz, switching format to S16"
+      kv_set "$CONF" LIBRESPOT_FORMAT S16
+    else
+      restart_player
+      die "$dev does not open at $rate Hz (busy, unplugged, or TV off?)"
+    fi
+  fi
+  kv_set "$SETTINGS" OUT_DEVICE "$dev"
+  apply_output
+  restart_player
+  restart_display
+}
+
+set_format() {
+  local f=$1
+  alsa_fmt "$f" >/dev/null
+  stop_player
+  probe "$(out_device)" "$f" "$(out_rate)" || { restart_player; die "$(out_device) does not accept $f at $(out_rate) Hz"; }
+  kv_set "$CONF" LIBRESPOT_FORMAT "$f"
+  # 16/24-bit integer output gets TPDF dither from librespot; none for S32/F32
+  apply_output
+  restart_player
+  restart_display
+}
+
+set_rate() {
+  local rate=$1
+  case "$rate" in 44100|48000|88200|96000|176400|192000) ;; *) die "unsupported rate $rate" ;; esac
+  stop_player
+  probe "$(out_device)" "$(fmt)" "$rate" || { restart_player; die "$(out_device) does not accept $rate Hz"; }
+  kv_set "$SETTINGS" OUT_RATE "$rate"
+  apply_output
+  restart_player
+}
+
+set_bitrate() {
+  case "$1" in 96|160|320) ;; *) die "bitrate must be 96, 160 or 320" ;; esac
+  kv_set "$CONF" LIBRESPOT_BITRATE "$1"
+  persist "$CONF"
+  restart_player
+  restart_display
+}
+
+set_volume() {
+  case "$1" in
+    soft)  kv_del "$CONF" LIBRESPOT_VOLUME_CTRL; kv_set "$CONF" LIBRESPOT_MIXER softvol ;;
+    fixed) kv_set "$CONF" LIBRESPOT_MIXER softvol; kv_set "$CONF" LIBRESPOT_VOLUME_CTRL fixed ;;
+    *) die "volume must be soft or fixed" ;;
+  esac
+  kv_set "$CONF" LIBRESPOT_INITIAL_VOLUME 100
+  persist "$CONF"
+  restart_player
+}
+
+set_name() {
+  [ -n "$1" ] && [ "${#1}" -le 60 ] || die "name must be 1-60 characters"
+  kv_set "$CONF" LIBRESPOT_NAME "$1"
+  persist "$CONF"
+  restart_player
+  restart_display
+}
+
+set_hostname() {
+  local h=$1 old
+  [[ "$h" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || die "hostname: lowercase letters, digits and '-' only"
+  old=$(cat "$ROOT/etc/hostname" 2>/dev/null || hostname)
+  echo "$h" > "$ROOT/etc/hostname"
+  if grep -q '^127\.0\.1\.1' "$ROOT/etc/hosts" 2>/dev/null; then
+    sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$h/" "$ROOT/etc/hosts"
+  else
+    printf '127.0.1.1\t%s\n' "$h" >> "$ROOT/etc/hosts"
+  fi
+  # cloud-init would put the old name back on the next boot
+  mkdir -p "$ROOT/etc/cloud"
+  touch "$ROOT/etc/cloud/cloud-init.disabled"
+  persist "$ROOT/etc/hostname" "$ROOT/etc/hosts" "$ROOT/etc/cloud/cloud-init.disabled"
+  sys hostnamectl set-hostname "$h"
+  sys systemctl restart avahi-daemon
+  echo "hostname $old -> $h (reachable as $h.local)"
+}
+
+set_display() {
+  case "$1" in
+    on)  both systemctl enable nowplaying; sys systemctl restart nowplaying ;;
+    off) both systemctl disable nowplaying; sys systemctl stop nowplaying
+         [ -n "$ROOT" ] || cat /dev/zero > /dev/fb0 2>/dev/null || true ;;   # clear last frame
+    *) die "display must be on or off" ;;
+  esac
+}
+
+# ------------------------------------------------------------ inspection ---
+devices() { # "name<TAB>description" for real outputs
+  [ -n "$ROOT" ] && { printf 'hdmi:CARD=vc4hdmi,DEV=0\tvc4-hdmi, HDMI\nhw:CARD=DAC,DEV=0\tUSB DAC, USB Audio\n'; return; }
+  aplay -L 2>/dev/null | awk '
+    /^[^ \t]/ { name = $0; next }
+    name ~ /^(hdmi|hw|plughw|iec958|sysdefault):CARD=/ && !seen[name]++ {
+      d = $0; sub(/^[ \t]+/, "", d); print name "\t" d; name = "" }'
+}
+
+host() { cat "$ROOT/etc/hostname" 2>/dev/null || hostname; }
+
+status() {
+  local root rate
+  root=$( [ -n "$ROOT" ] && echo test || findmnt / -no FSTYPE)
+  rate=$(out_rate)
+  cat <<EOF
+Speaker name   $(conf LIBRESPOT_NAME)
+Hostname       $(host)
+IP address     $( [ -n "$ROOT" ] || hostname -I 2>/dev/null | awk '{print $1}')
+Output device  $(out_device)
+Format         $(fmt) ($(alsa_fmt "$(fmt)"))
+Sample rate    $rate Hz$( [ "$rate" = "$NATIVE_RATE" ] && echo " (native, bit-perfect)" || echo " (resampled from 44100)")
+Bitrate        $(conf LIBRESPOT_BITRATE) kbps
+Volume         $( [ "$(conf LIBRESPOT_VOLUME_CTRL)" = fixed ] && echo "fixed (bit-perfect, use the TV/amp)" || echo "software (phone controls volume)")
+Display        $( [ -n "$ROOT" ] && echo test || (systemctl is-enabled nowplaying 2>/dev/null || true))
+Player         $( [ -n "$ROOT" ] && echo test || (systemctl is-active raspotify 2>/dev/null || true))
+Root fs        $root$( [ "$root" = overlay ] && echo " (read-only, changes saved by a206-config)")
+EOF
+}
+
+test_tone() { # 2 s, 440 Hz at -20 dBFS through the configured output
+  local dev
+  dev=$(conf LIBRESPOT_DEVICE)
+  stop_player
+  python3 -c '
+import math, struct, sys
+n = 44100 * 2
+a = 0.1 * 32767
+sys.stdout.buffer.write(b"".join(struct.pack("<hh", int(a * math.sin(2 * math.pi * 440 * i / 44100)), int(a * math.sin(2 * math.pi * 440 * i / 44100))) for i in range(n)))
+' | aplay -q -D "$dev" -f S16_LE -r 44100 -c 2 || echo "test tone failed on $dev"
+  restart_player
+}
+
+# -------------------------------------------------------------------- TUI ---
+wt() { whiptail --title "$TITLE" "$@" 3>&1 1>&2 2>&3; }
+msg() { whiptail --title "$TITLE" --msgbox "$1" 20 74; }
+run_msg() { # run a setter, show its output or error
+  local out
+  if out=$("$@" 2>&1); then msg "Done.${out:+\n\n$out}"; else msg "Failed:\n\n$out"; fi
+}
+
+menu_device() {
+  local cur args=() name desc pick
+  cur=$(out_device)
+  while IFS=$'\t' read -r name desc; do
+    args+=("$name" "${desc:0:38}" "$( [ "$name" = "$cur" ] && echo ON || echo OFF)")
+  done < <(devices)
+  [ ${#args[@]} -gt 0 ] || { msg "No ALSA output found."; return; }
+  pick=$(wt --radiolist "Audio output. hw: = bit-perfect (exact format needed),\nplughw: = ALSA converts, hdmi: = HDMI to TV/amp." 22 76 12 "${args[@]}") || return
+  [ "$pick" = "$cur" ] || run_msg set_device "$pick"
+}
+
+menu_format() {
+  local cur pick
+  cur=$(fmt)
+  pick=$(wt --radiolist "Bit depth / sample format sent to the output.\nSpotify streams 16-bit Ogg Vorbis 320 kbps, decoded in float.\nS32 / F32 keep everything after volume undithered." 18 74 5 \
+    S16 "16-bit (dithered)" "$( [ "$cur" = S16 ] && echo ON || echo OFF)" \
+    S24 "24-bit in 32-bit container (dithered)" "$( [ "$cur" = S24 ] && echo ON || echo OFF)" \
+    S24_3 "24-bit packed, 3 bytes (dithered)" "$( [ "$cur" = S24_3 ] && echo ON || echo OFF)" \
+    S32 "32-bit integer (recommended for HDMI)" "$( [ "$cur" = S32 ] && echo ON || echo OFF)" \
+    F32 "32-bit float" "$( [ "$cur" = F32 ] && echo ON || echo OFF)") || return
+  [ "$pick" = "$cur" ] || run_msg set_format "$pick"
+}
+
+menu_rate() {
+  local cur pick r args=()
+  cur=$(out_rate)
+  for r in 44100 48000 88200 96000 176400 192000; do
+    local d="resampled (speex best)"
+    [ "$r" = 44100 ] && d="native, bit-perfect (recommended)"
+    args+=("$r" "$d" "$( [ "$r" = "$cur" ] && echo ON || echo OFF)")
+  done
+  pick=$(wt --radiolist "Output sample rate. Spotify is 44.1 kHz: any other rate\nis resampled and cannot add detail, only match a DAC/amp." 18 74 6 "${args[@]}") || return
+  [ "$pick" = "$cur" ] || run_msg set_rate "$pick"
+}
+
+menu_bitrate() {
+  local cur pick
+  cur=$(conf LIBRESPOT_BITRATE)
+  pick=$(wt --radiolist "Spotify stream bitrate (Ogg Vorbis)." 14 60 3 \
+    320 "very high (max for Connect)" "$( [ "$cur" = 320 ] && echo ON || echo OFF)" \
+    160 "high" "$( [ "$cur" = 160 ] && echo ON || echo OFF)" \
+    96 "normal" "$( [ "$cur" = 96 ] && echo ON || echo OFF)") || return
+  [ "$pick" = "$cur" ] || run_msg set_bitrate "$pick"
+}
+
+menu_volume() {
+  local cur pick
+  cur=$( [ "$(conf LIBRESPOT_VOLUME_CTRL)" = fixed ] && echo fixed || echo soft)
+  pick=$(wt --radiolist "Volume control." 14 70 2 \
+    soft "phone/app controls volume (float, transparent at 100%)" "$( [ "$cur" = soft ] && echo ON || echo OFF)" \
+    fixed "always 100%, bit-perfect; use the TV/amp volume" "$( [ "$cur" = fixed ] && echo ON || echo OFF)") || return
+  [ "$pick" = "$cur" ] || run_msg set_volume "$pick"
+}
+
+menu_name() {
+  local v
+  v=$(wt --inputbox "Name shown in the Spotify device list:" 10 60 "$(conf LIBRESPOT_NAME)") || return
+  run_msg set_name "$v"
+}
+
+menu_hostname() {
+  local v
+  v=$(wt --inputbox "Hostname (network name, <name>.local):" 10 60 "$(host)") || return
+  run_msg set_hostname "$v"
+}
+
+menu_display() {
+  local cur pick
+  cur=$(systemctl is-enabled nowplaying 2>/dev/null || echo disabled)
+  pick=$(wt --radiolist "Now-playing screen on HDMI (cover, lyrics, track info)." 12 64 2 \
+    on "enabled" "$( [ "$cur" = enabled ] && echo ON || echo OFF)" \
+    off "disabled (blank screen)" "$( [ "$cur" != enabled ] && echo ON || echo OFF)") || return
+  run_msg set_display "$pick"
+}
+
+menu_root() {
+  if overlay_active; then
+    wt --yesno "The root filesystem is read-only (overlay) and resets on every boot.\nSettings made here are saved anyway.\n\nUnlock it permanently (for apt upgrades / manual edits)?\nThis reboots the speaker." 14 70 || return
+    raspi-config nonint disable_overlayfs && systemctl reboot
+  else
+    wt --yesno "The root filesystem is writable.\n\nLock it read-only again (recommended: safe against power cuts)?\nThis reboots the speaker." 12 70 || return
+    raspi-config nonint enable_overlayfs && systemctl reboot
+  fi
+}
+
+menu() {
+  command -v whiptail >/dev/null || die "whiptail not installed; use: a206-config status|set"
+  local c
+  while true; do
+    c=$(wt --menu "$(conf LIBRESPOT_NAME) · $(host) · $(out_device) · $(fmt) · $(out_rate) Hz" 22 76 13 \
+      status   "Show current settings" \
+      output   "Audio output device" \
+      depth    "Bit depth / sample format" \
+      rate     "Sample rate" \
+      bitrate  "Spotify bitrate" \
+      volume   "Volume control (software / fixed)" \
+      name     "Speaker name in Spotify" \
+      hostname "Hostname" \
+      display  "Now-playing display on/off" \
+      tone     "Play a test tone (2 s, -20 dB)" \
+      root     "Read-only root: lock / unlock" \
+      restart  "Restart player and display" \
+      reboot   "Reboot") || break
+    case "$c" in
+      status) msg "$(status)" ;;
+      output) menu_device ;;
+      depth) menu_format ;;
+      rate) menu_rate ;;
+      bitrate) menu_bitrate ;;
+      volume) menu_volume ;;
+      name) menu_name ;;
+      hostname) menu_hostname ;;
+      display) menu_display ;;
+      tone) test_tone; msg "Test tone played on $(conf LIBRESPOT_DEVICE)." ;;
+      root) menu_root ;;
+      restart) restart_player; restart_display; msg "Restarted." ;;
+      reboot) wt --yesno "Reboot now?" 8 40 && systemctl reboot ;;
+    esac
+  done
+}
+
+# -------------------------------------------------------------------- CLI ---
+[ -f "$CONF" ] || die "$CONF not found (is raspotify installed?)"
+case "${1:-}" in
+  "") menu ;;
+  status) status ;;
+  devices) devices | column -t -s $'\t' ;;
+  tone) test_tone ;;
+  set)
+    [ $# -eq 3 ] || die "usage: a206-config set KEY VALUE"
+    case "$2" in
+      name) set_name "$3" ;; hostname) set_hostname "$3" ;; device) set_device "$3" ;;
+      format) set_format "$3" ;; rate) set_rate "$3" ;; bitrate) set_bitrate "$3" ;;
+      volume) set_volume "$3" ;; display) set_display "$3" ;;
+      *) die "unknown key $2" ;;
+    esac ;;
+  -h|--help|help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command $1 (try --help)" ;;
+esac
