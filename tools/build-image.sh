@@ -6,13 +6,13 @@
 #   tools/build-image.sh [options]
 #
 # Options:
-#   -n NAME     speaker name shown in Spotify          (default: A206)
+#   -n NAME     speaker name shown in Spotify          (default: PiSpot)
 #   -H HOST     hostname, reachable as HOST.local       (default: from NAME)
-#   -t TZ       timezone                                (default: Europe/Paris)
+#   -t TZ       timezone                                (default: this machine's)
 #   -k FILE     SSH public key for user pi              (default: ~/.ssh/id_ed25519.pub)
 #   -w SSID     also join this Wi-Fi network (Ethernet always works)
 #   -p PASS     Wi-Fi password
-#   -c CC       Wi-Fi country code                      (default: FR)
+#   -c CC       Wi-Fi country code, e.g. FR, US, JP     (required with -w)
 #   -o FILE     output image                            (default: build/HOST.img)
 #   -z          also write FILE.xz (for Raspberry Pi Imager / balenaEtcher)
 #   -f DEV      flash to DEV (e.g. /dev/sdf) after building
@@ -25,8 +25,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-NAME="A206" HOST="" TZ_="Europe/Paris" KEY="$HOME/.ssh/id_ed25519.pub"
-WIFI_SSID="" WIFI_PASS="" WIFI_COUNTRY="FR" OUT="" XZ=0 DEV="" IMG_IN="" YES=0
+NAME="PiSpot" HOST="" KEY="$HOME/.ssh/id_ed25519.pub"
+TZ_=$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || true)
+TZ_=${TZ_:-UTC}
+WIFI_SSID="" WIFI_PASS="" WIFI_COUNTRY="" OUT="" XZ=0 DEV="" IMG_IN="" YES=0
 
 die() { echo "build-image: $*" >&2; exit 1; }
 usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -43,7 +45,7 @@ ask() { # var prompt default
 }
 
 wizard() {
-  echo "== Spotify Connect speaker image =="
+  echo "== pispot: Spotify Connect speaker image =="
   echo "1) Build an image file"
   echo "2) Build and flash an SD card"
   echo "3) Flash an existing image"
@@ -59,7 +61,7 @@ wizard() {
     ask WIFI_SSID "Wi-Fi SSID (empty = Ethernet only)" ""
     if [ -n "$WIFI_SSID" ]; then
       read -rsp "Wi-Fi password: " WIFI_PASS; echo
-      ask WIFI_COUNTRY "Wi-Fi country code" "$WIFI_COUNTRY"
+      ask WIFI_COUNTRY "Wi-Fi country code (FR, US, JP...)" "$WIFI_COUNTRY"
     fi
     local z
     ask z "Also write a compressed .img.xz? (y/n)" n
@@ -121,11 +123,13 @@ if [ -n "$IMG_IN" ]; then
 fi
 
 # ------------------------------------------------------------------- build ---
+WIFI_COUNTRY=${WIFI_COUNTRY^^}
 HOST=${HOST:-$(slug "$NAME")}
 [[ "$HOST" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || die "bad hostname '$HOST'"
 [ -f "$KEY" ] || die "SSH key $KEY not found (ssh-keygen -t ed25519)"
 [ -f "/usr/share/zoneinfo/$TZ_" ] || echo "warning: timezone $TZ_ unknown here, using it anyway"
 [ -z "$WIFI_SSID" ] || [ ${#WIFI_PASS} -ge 8 ] || die "Wi-Fi password must be at least 8 characters"
+[ -z "$WIFI_SSID" ] || [[ "$WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] || die "Wi-Fi needs a 2-letter country code (-c FR, US, JP...)"
 OUT=${OUT:-build/$HOST.img}
 mkdir -p dl "$(dirname "$OUT")"
 
@@ -187,9 +191,9 @@ sudo cp boot/meta-data "$MNT/"
   echo "SPEAKER_NAME=$(sh_q "$NAME")"
   echo "WIFI_SSID=$(sh_q "$WIFI_SSID")"
   echo "WIFI_COUNTRY=$(sh_q "$WIFI_COUNTRY")"
-} | sudo tee "$MNT/a206.conf" >/dev/null
+} | sudo tee "$MNT/pispot.conf" >/dev/null
 
-# first-boot script, raspotify, display and the a206-config TUI
+# first-boot script, raspotify, display and the pispot-config TUI
 sudo cp boot/spotify-setup.sh "$DEB" "$MNT"/
 sudo mkdir -p "$MNT/display" "$MNT/system"
 sudo cp display/* "$MNT/display/"

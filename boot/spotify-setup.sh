@@ -7,14 +7,14 @@ echo "=== spotify-setup start $(date -Is) ==="
 
 BOOT=/boot/firmware
 # Build-time settings written by tools/build-image.sh
-SPEAKER_NAME="A206"
+SPEAKER_NAME="PiSpot"
 WIFI_SSID=""
-WIFI_COUNTRY="FR"
+WIFI_COUNTRY=""
 # shellcheck source=/dev/null
-[ -f "$BOOT/a206.conf" ] && . "$BOOT/a206.conf"
+[ -f "$BOOT/pispot.conf" ] && . "$BOOT/pispot.conf"
 export DEBIAN_FRONTEND=noninteractive
 
-if [ -n "$WIFI_SSID" ]; then raspi-config nonint do_wifi_country "$WIFI_COUNTRY" || true; fi
+if [ -n "$WIFI_COUNTRY" ]; then raspi-config nonint do_wifi_country "$WIFI_COUNTRY" || true; fi
 
 # Wait for Ethernet/Wi-Fi + DNS (up to ~5 min)
 for i in $(seq 1 60); do
@@ -96,12 +96,12 @@ install -m644 "$BOOT"/display/raspotify-display.conf /etc/systemd/system/raspoti
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl enable nowplaying.service
 
-# --- a206-config: SSH TUI for output, format, rate, names, display ---
+# --- pispot-config: SSH TUI for output, format, rate, names, display ---
 apt-get -y install whiptail libasound2-plugins   # speexrate resampler for non-44.1k rates
-install -m755 "$BOOT"/system/a206-config /usr/local/sbin/
-mkdir -p /etc/a206
-printf 'OUT_DEVICE="%s"\nOUT_RATE="44100"\n' "$DEVICE" > /etc/a206/settings
-printf '\n  %s: Spotify Connect speaker.  Settings:  sudo a206-config\n\n' "$SPEAKER_NAME" > /etc/motd
+install -m755 "$BOOT"/system/pispot-config /usr/local/sbin/
+mkdir -p /etc/pispot
+printf 'OUT_DEVICE="%s"\nOUT_RATE="44100"\n' "$DEVICE" > /etc/pispot/settings
+printf '\n  %s: Spotify Connect speaker.  Settings:  sudo pispot-config\n\n' "$SPEAKER_NAME" > /etc/motd
 
 systemctl daemon-reload
 systemctl restart raspotify.service || true

@@ -1,8 +1,13 @@
-# A206 — Raspberry Pi Spotify Connect speaker
+# pispot: Raspberry Pi Spotify Connect speaker
 
-Unattended Raspberry Pi OS Lite (arm64) build that turns a Raspberry Pi 3B v1.2
-into a dedicated Spotify Connect speaker on the LAN, playing over HDMI, with a
-full-screen now-playing display on the same screen.
+Unattended Raspberry Pi OS Lite (arm64) build that turns a Raspberry Pi into a
+dedicated Spotify Connect speaker on your LAN. It plays over HDMI (or any ALSA
+output) and shows a full-screen now-playing display on the same screen. Build
+one image per room, each with its own speaker name and hostname.
+
+Tested on a Raspberry Pi 3B v1.2. Other 64-bit Pis (3B+, 4, 5, Zero 2 W) should
+work: the setup picks the first HDMI output it finds, and `pispot-config` can
+switch to any other output.
 
 - **Audio:** [raspotify](https://github.com/dtcooper/raspotify) (librespot)
   at 320 kbps Ogg Vorbis, the most Spotify serves to non-SDK Connect devices
@@ -15,7 +20,7 @@ full-screen now-playing display on the same screen.
 - **Appliance:** Ethernet (plus optional Wi-Fi), SSH key login only, read-only
   root (overlayfs) so pulling the power is safe, and the services restart
   themselves if they crash.
-- **`sudo a206-config`:** SSH TUI to change the output device, bit depth,
+- **`sudo pispot-config`:** SSH TUI to change the output device, bit depth,
   sample rate, bitrate, volume mode, speaker name, hostname and the display.
   Changes apply live and persist through the read-only root.
 
@@ -24,13 +29,13 @@ full-screen now-playing display on the same screen.
 | Path | What |
 |---|---|
 | `boot/user-data`, `meta-data` | cloud-init seed template (hostname, timezone, user `pi` + SSH key) |
-| `boot/spotify-setup.sh` | first-boot script: apt (retries past captive portals), raspotify, HDMI format, display, a206-config, lockdown, overlayfs |
-| `system/a206-config` | SSH TUI / CLI for audio and system settings |
+| `boot/spotify-setup.sh` | first-boot script: apt (retries past captive portals), raspotify, HDMI format, display, pispot-config, lockdown, overlayfs |
+| `system/pispot-config` | SSH TUI / CLI for audio and system settings |
 | `display/nowplaying-event` | librespot `--onevent` hook → JSON in `/run/raspotify/np/` |
 | `display/nowplaying.py` | pygame renderer → `/dev/fb0` (or `--render out.png`) |
 | `display/*.service`, `*.conf` | systemd unit + raspotify drop-in setting `LIBRESPOT_ONEVENT` |
 | `tools/build-image.sh` | wizard / CLI: build a `.img` (+ `.img.xz`), flash an SD card, or both |
-| `tools/deploy.sh` | push `display/` and `a206-config` to a running speaker (unlocks/relocks overlayfs) |
+| `tools/deploy.sh` | push `display/` and `pispot-config` to a running speaker (unlocks/relocks overlayfs) |
 | `tools/preview.sh` | render a frame locally with real lyrics/bio lookups |
 | `tools/screenshot.sh` | grab what the speaker's screen shows right now |
 
@@ -40,7 +45,8 @@ full-screen now-playing display on the same screen.
 tools/build-image.sh                                  # wizard
 tools/build-image.sh -n "Living Room" -z              # build/living-room.img + .img.xz
 tools/build-image.sh -n Kitchen -w MyWiFi -p secret -c FR -f /dev/sdf   # build + flash
-tools/build-image.sh -I build/a206.img -f /dev/sdf   # flash an existing image
+tools/build-image.sh -n "Room 12" -H room12 -t America/New_York       # one image per room
+tools/build-image.sh -I build/pispot.img -f /dev/sdf   # flash an existing image
 ```
 
 A Pi boots a raw disk image, not an ISO. The `.img.xz` works with Raspberry Pi
@@ -49,25 +55,25 @@ Imager ("Use custom") or balenaEtcher. In WSL, attach the card reader first with
 asks before erasing.
 
 Boot the Pi with Ethernet (or the configured Wi-Fi) and HDMI plugged in. First boot takes about 10–15 min
-and reboots once. Then pick **A206** in Spotify. Log: `/var/log/spotify-setup.log`.
+and reboots once. Then pick your speaker (default **PiSpot**) in Spotify. Log: `/var/log/spotify-setup.log`.
 
 ```bash
-tools/deploy.sh pi@a206.local        # update the display on a running speaker
+tools/deploy.sh pi@pispot.local        # update the display on a running speaker
 tools/preview.sh out.png "Cure For Me" AURORA "The Gods We Can Touch" 198853 61000
 ```
 
 ## Settings on the speaker
 
 ```bash
-ssh pi@a206.local
-sudo a206-config                     # menu
-sudo a206-config status
-sudo a206-config set format S32      # S16 S24 S24_3 S32 F32
-sudo a206-config set rate 96000      # 44100 = native/bit-perfect; others via speex resampler
-sudo a206-config set device hw:CARD=DAC,DEV=0
-sudo a206-config set volume fixed    # or soft
-sudo a206-config set hostname salon ; sudo a206-config set name "Salon"
-sudo a206-config set display off
+ssh pi@pispot.local
+sudo pispot-config                     # menu
+sudo pispot-config status
+sudo pispot-config set format S32      # S16 S24 S24_3 S32 F32
+sudo pispot-config set rate 96000      # 44100 = native/bit-perfect; others via speex resampler
+sudo pispot-config set device hw:CARD=DAC,DEV=0
+sudo pispot-config set volume fixed    # or soft
+sudo pispot-config set hostname salon ; sudo pispot-config set name "Salon"
+sudo pispot-config set display off
 ```
 
 librespot always decodes at 44.1 kHz, so other rates go through an ALSA `plug`

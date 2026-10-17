@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# Full-screen "now playing" display for the A206 Spotify Connect speaker.
+# Full-screen "now playing" display for a pispot Spotify Connect speaker.
 # Reads state written by /usr/local/bin/nowplaying-event (librespot --onevent),
 # shows cover art, synced lyrics (LRCLIB) or an artist bio (Wikipedia), and the
 # track info under the progress bar.
@@ -14,7 +14,7 @@ import pygame
 
 NP_DIR = os.environ.get("NP_DIR", "/run/raspotify/np")
 RASPOTIFY_CONF = os.environ.get("RASPOTIFY_CONF", "/etc/raspotify/conf")
-UA = "A206-nowplaying/1.0 (Raspberry Pi Spotify Connect display)"
+UA = "pispot-nowplaying/1.0 (+https://github.com/Vinanddrinks/pispot)"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 # Fallback for Japanese / Chinese / Korean (fonts-noto-cjk); .ttc face 0 = JP
@@ -36,9 +36,9 @@ def load(name):
 
 
 def player_conf():
-    """Speaker name / bitrate / format as set by a206-config (re-read each frame
+    """Speaker name / bitrate / format as set by pispot-config (re-read each frame
     is cheap: the file is tiny and lives in the page cache)."""
-    c = {"LIBRESPOT_NAME": "A206", "LIBRESPOT_BITRATE": "320", "LIBRESPOT_FORMAT": "S16"}
+    c = {"LIBRESPOT_NAME": "PiSpot", "LIBRESPOT_BITRATE": "320", "LIBRESPOT_FORMAT": "S16"}
     try:
         for line in open(RASPOTIFY_CONF):
             k, sep, v = line.strip().partition("=")

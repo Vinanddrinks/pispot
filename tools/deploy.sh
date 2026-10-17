@@ -1,9 +1,9 @@
 #!/bin/bash
-# Push display/ and a206-config to a running speaker, keeping the read-only root afterwards.
-#   tools/deploy.sh [user@host]      (default pi@a206.local)
+# Push display/ and pispot-config to a running speaker, keeping the read-only root afterwards.
+#   tools/deploy.sh [user@host]      (default pi@pispot.local)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-HOST="${1:-pi@a206.local}"
+HOST="${1:-pi@pispot.local}"
 
 ssh_() { ssh -o ConnectTimeout=10 "$HOST" "$@"; }
 wait_up() {
@@ -21,11 +21,11 @@ scp -q display/* system/* "$HOST":/tmp/
 ssh_ 'set -e
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   python3-pygame python3-fonttools fonts-dejavu-core fonts-noto-cjk whiptail libasound2-plugins >/dev/null
-sudo install -m755 /tmp/a206-config /usr/local/sbin/
-if [ ! -f /etc/a206/settings ]; then
-  sudo mkdir -p /etc/a206
+sudo install -m755 /tmp/pispot-config /usr/local/sbin/
+if [ ! -f /etc/pispot/settings ]; then
+  sudo mkdir -p /etc/pispot
   dev=$(sudo sed -n "s/^LIBRESPOT_DEVICE=//p" /etc/raspotify/conf | tr -d "\"")
-  printf "OUT_DEVICE=\"%s\"\nOUT_RATE=\"44100\"\n" "$dev" | sudo tee /etc/a206/settings >/dev/null
+  printf "OUT_DEVICE=\"%s\"\nOUT_RATE=\"44100\"\n" "$dev" | sudo tee /etc/pispot/settings >/dev/null
 fi
 sudo touch /etc/cloud/cloud-init.disabled
 sudo install -m755 /tmp/nowplaying-event /tmp/nowplaying.py /usr/local/bin/

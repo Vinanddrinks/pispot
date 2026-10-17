@@ -1,28 +1,28 @@
 #!/bin/bash
-# a206-config: manage the Spotify Connect speaker over SSH.
+# pispot-config: manage the Spotify Connect speaker over SSH.
 #
-#   sudo a206-config                     interactive menu (whiptail)
-#   sudo a206-config status              print current settings
-#   sudo a206-config set KEY VALUE       name | hostname | device | format | rate |
+#   sudo pispot-config                     interactive menu (whiptail)
+#   sudo pispot-config status              print current settings
+#   sudo pispot-config set KEY VALUE       name | hostname | device | format | rate |
 #                                        bitrate | volume | display
-#   sudo a206-config devices             list ALSA outputs
+#   sudo pispot-config devices             list ALSA outputs
 #
 # Changes apply live and are also written to the real root filesystem when the
 # read-only overlay is active (via overlayroot-chroot), so they survive reboots.
 set -euo pipefail
 
-ROOT="${A206_ROOT:-}"                 # test hook: operate on a fake tree, no system calls
+ROOT="${PISPOT_ROOT:-}"                 # test hook: operate on a fake tree, no system calls
 CONF="$ROOT/etc/raspotify/conf"
 ASOUND="$ROOT/etc/asound.conf"
-SETTINGS="$ROOT/etc/a206/settings"    # real output device/rate (conf may point at the plug)
-TITLE="A206 speaker"
-PLUG=a206                             # ALSA plug used when resampling
+SETTINGS="$ROOT/etc/pispot/settings"    # real output device/rate (conf may point at the plug)
+TITLE="pispot"
+PLUG=pispot                           # ALSA plug used when resampling
 NATIVE_RATE=44100                     # librespot always decodes Spotify at 44.1 kHz
 
 if [ -z "$ROOT" ] && [ "$EUID" -ne 0 ]; then exec sudo "$0" "$@"; fi
 
 # ---------------------------------------------------------------- helpers ---
-die() { echo "a206-config: $*" >&2; exit 1; }
+die() { echo "pispot-config: $*" >&2; exit 1; }
 sys() { if [ -n "$ROOT" ]; then echo "[dry-run] $*"; else "$@"; fi; }
 
 overlay_active() { [ -z "$ROOT" ] && [ "$(findmnt / -no FSTYPE)" = overlay ]; }
@@ -100,7 +100,7 @@ apply_output() {
   kv_set "$SETTINGS" OUT_DEVICE "$dev"   # remember it before conf points at the plug
   if [ "$rate" = "$NATIVE_RATE" ]; then
     kv_set "$CONF" LIBRESPOT_DEVICE "$dev"
-    if [ -f "$ASOUND" ] && grep -q "a206-config" "$ASOUND"; then rm -f "$ASOUND"; fi
+    if [ -f "$ASOUND" ] && grep -q "pispot-config" "$ASOUND"; then rm -f "$ASOUND"; fi
   else
     local conv='defaults.pcm.rate_converter "speexrate_best"'
     if [ -z "$ROOT" ] && ! ls /usr/lib/*/alsa-lib/libasound_module_rate_speexrate.so >/dev/null 2>&1; then
@@ -108,7 +108,7 @@ apply_output() {
       conv="# (speexrate unavailable: install libasound2-plugins)"
     fi
     cat > "$ASOUND" <<EOF
-# Managed by a206-config: resample librespot's 44.1 kHz output
+# Managed by pispot-config: resample librespot's 44.1 kHz output
 $conv
 pcm.$PLUG {
   type plug
@@ -247,7 +247,7 @@ Bitrate        $(conf LIBRESPOT_BITRATE) kbps
 Volume         $( [ "$(conf LIBRESPOT_VOLUME_CTRL)" = fixed ] && echo "fixed (bit-perfect, use the TV/amp)" || echo "software (phone controls volume)")
 Display        $( [ -n "$ROOT" ] && echo test || (systemctl is-enabled nowplaying 2>/dev/null || true))
 Player         $( [ -n "$ROOT" ] && echo test || (systemctl is-active raspotify 2>/dev/null || true))
-Root fs        $root$( [ "$root" = overlay ] && echo " (read-only, changes saved by a206-config)")
+Root fs        $root$( [ "$root" = overlay ] && echo " (read-only, changes saved by pispot-config)")
 EOF
 }
 
@@ -358,7 +358,7 @@ menu_root() {
 }
 
 menu() {
-  command -v whiptail >/dev/null || die "whiptail not installed; use: a206-config status|set"
+  command -v whiptail >/dev/null || die "whiptail not installed; use: pispot-config status|set"
   local c
   while true; do
     c=$(wt --menu "$(conf LIBRESPOT_NAME) · $(host) · $(out_device) · $(fmt) · $(out_rate) Hz" 22 76 13 \
@@ -401,7 +401,7 @@ case "${1:-}" in
   devices) devices | column -t -s $'\t' ;;
   tone) test_tone ;;
   set)
-    [ $# -eq 3 ] || die "usage: a206-config set KEY VALUE"
+    [ $# -eq 3 ] || die "usage: pispot-config set KEY VALUE"
     case "$2" in
       name) set_name "$3" ;; hostname) set_hostname "$3" ;; device) set_device "$3" ;;
       format) set_format "$3" ;; rate) set_rate "$3" ;; bitrate) set_bitrate "$3" ;;
