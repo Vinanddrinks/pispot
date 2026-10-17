@@ -13,7 +13,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
 NP_DIR = os.environ.get("NP_DIR", "/run/raspotify/np")
-SPEAKER = "A206"
+RASPOTIFY_CONF = os.environ.get("RASPOTIFY_CONF", "/etc/raspotify/conf")
 UA = "A206-nowplaying/1.0 (Raspberry Pi Spotify Connect display)"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -33,6 +33,20 @@ def load(name):
             return json.load(f)
     except Exception:
         return {}
+
+
+def player_conf():
+    """Speaker name / bitrate / format as set by a206-config (re-read each frame
+    is cheap: the file is tiny and lives in the page cache)."""
+    c = {"LIBRESPOT_NAME": "A206", "LIBRESPOT_BITRATE": "320", "LIBRESPOT_FORMAT": "S16"}
+    try:
+        for line in open(RASPOTIFY_CONF):
+            k, sep, v = line.strip().partition("=")
+            if sep and not k.startswith("#"):
+                c[k] = v.strip('"')
+    except OSError:
+        pass
+    return c
 
 
 def fmt(ms):
@@ -318,11 +332,13 @@ class Display:
         active = bool(track) and not state.get("stopped") and (
             state.get("playing") or now - state.get("at", 0) < 600)
 
+        pc = player_conf()
+        speaker = pc["LIBRESPOT_NAME"]
         S.fill((12, 12, 14))
         if not active:
             t = self.f_clock.render(time.strftime("%H:%M", time.localtime(now)), True, WHITE)
             S.blit(t, t.get_rect(center=(W // 2, H * 0.42)))
-            s = self.f_artist.render(f"{SPEAKER}  ·  Spotify Connect", True, ACCENT)
+            s = self.f_artist.render(f"{speaker}  ·  Spotify Connect", True, ACCENT)
             S.blit(s, s.get_rect(center=(W // 2, H * 0.62)))
             s = self.f_small.render("Select this speaker in the Spotify app", True, DIM)
             S.blit(s, s.get_rect(center=(W // 2, H * 0.70)))
@@ -374,7 +390,8 @@ class Display:
         s = self.f_artist.render(fit(self.f_artist, sub, bw), True, DIM)
         S.blit(s, (bx, y))
 
-        status = ("▶ " if state.get("playing") else "❚❚ ") + f"{SPEAKER}  ·  320 kbps"
+        status = ("▶ " if state.get("playing") else "❚❚ ") + \
+            f"{speaker}  ·  {pc['LIBRESPOT_BITRATE']} kbps  ·  {pc['LIBRESPOT_FORMAT']}"
         if vol and now - vol.get("at", 0) < 4:
             status += f"  ·  volume {vol.get('volume', 0)}%"
         s = self.f_small.render(status, True, ACCENT)
