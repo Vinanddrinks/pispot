@@ -11,6 +11,9 @@ NP_DIR = "/run/raspotify/np"
 SPEAKER = "A206"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+# Fallback for Japanese / Chinese / Korean (fonts-noto-cjk); .ttc face 0 = JP
+CJK = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+CJK_B = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 WHITE, DIM, ACCENT = (245, 245, 245), (170, 170, 170), (30, 215, 96)
 
 
@@ -62,6 +65,46 @@ def blurred(img, size):
     return big
 
 
+class MFont:
+    """pygame Font with per-character fallback (DejaVu first, then CJK)."""
+
+    def __init__(self, paths, size):
+        self.fonts = [pygame.font.Font(p, size) for p in paths if os.path.exists(p)]
+
+    def _runs(self, text):
+        runs = []
+        for ch in text:
+            idx = len(self.fonts) - 1
+            for i, f in enumerate(self.fonts):
+                m = f.metrics(ch)
+                if ch.isspace() or (m and m[0] is not None):
+                    idx = i
+                    break
+            if runs and runs[-1][0] == idx:
+                runs[-1][1] += ch
+            else:
+                runs.append([idx, ch])
+        return [(self.fonts[i], t) for i, t in runs]
+
+    def size(self, text):
+        runs = self._runs(text) or [(self.fonts[0], "")]
+        w = sum(f.size(t)[0] for f, t in runs)
+        asc = max(f.get_ascent() for f, _ in runs)
+        desc = max(-f.get_descent() for f, _ in runs)
+        return w, asc + desc
+
+    def render(self, text, aa, color):
+        runs = self._runs(text) or [(self.fonts[0], "")]
+        asc = max(f.get_ascent() for f, _ in runs)
+        surf = pygame.Surface(self.size(text), pygame.SRCALPHA)
+        x = 0
+        for f, t in runs:
+            r = f.render(t, aa, color)
+            surf.blit(r, (x, asc - f.get_ascent()))
+            x += r.get_width()
+        return surf
+
+
 def fit(font, text, width):
     if font.size(text)[0] <= width:
         return text
@@ -88,11 +131,11 @@ def main():
         fb.seek(0)
         fb.write(out.get_buffer().raw)
     u = H / 100
-    f_title = pygame.font.Font(FONT_B, int(6.5 * u))
-    f_artist = pygame.font.Font(FONT, int(4.6 * u))
-    f_album = pygame.font.Font(FONT, int(3.4 * u))
-    f_small = pygame.font.Font(FONT, int(2.6 * u))
-    f_clock = pygame.font.Font(FONT_B, int(18 * u))
+    f_title = MFont((FONT_B, CJK_B), int(6.5 * u))
+    f_artist = MFont((FONT, CJK), int(4.6 * u))
+    f_album = MFont((FONT, CJK), int(3.4 * u))
+    f_small = MFont((FONT, CJK), int(2.6 * u))
+    f_clock = MFont((FONT_B, CJK_B), int(18 * u))
     covers = Covers()
     bg_for, bg = None, None
     clock = pygame.time.Clock()
