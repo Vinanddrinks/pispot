@@ -81,6 +81,14 @@ systemctl enable avahi-daemon.service raspotify.service
 apt-get -y install cpufrequtils || true
 echo 'GOVERNOR="performance"' > /etc/default/cpufrequtils
 
+# --- Now-playing display on HDMI (files shipped in $BOOT/display/) ---
+apt-get -y install python3-pygame fonts-dejavu-core
+install -m755 "$BOOT"/display/nowplaying-event "$BOOT"/display/nowplaying.py /usr/local/bin/
+install -m644 "$BOOT"/display/nowplaying.service /etc/systemd/system/
+install -m644 "$BOOT"/display/raspotify-display.conf /etc/systemd/system/raspotify.service.d/display.conf
+systemctl disable getty@tty1.service 2>/dev/null || true
+systemctl enable nowplaying.service
+
 systemctl daemon-reload
 systemctl restart raspotify.service || true
 

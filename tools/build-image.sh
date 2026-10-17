@@ -38,6 +38,8 @@ sudo mount "${LOOP}p1" "$MNT"
 
 sudo cp boot/meta-data boot/network-config boot/spotify-setup.sh "$DEB" "$MNT"/
 sed "s|__SSH_PUBKEY__.*|$(cat "$PUBKEY_FILE")|" boot/user-data | sudo tee "$MNT/user-data" >/dev/null
+sudo mkdir -p "$MNT/display"
+sudo cp display/* "$MNT/display/"
 
 # HDMI audio only; Wi-Fi and Bluetooth off (Ethernet speaker)
 sudo sed -i 's/^dtparam=audio=on/dtparam=audio=off/' "$MNT/config.txt"

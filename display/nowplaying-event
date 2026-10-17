@@ -1,0 +1,46 @@
+#!/usr/bin/python3
+# librespot --onevent hook: saves playback state for the now-playing display.
+import json, os, time
+
+d = os.environ.get("NP_DIR", "/run/raspotify/np")
+os.makedirs(d, exist_ok=True)
+e = os.environ
+ev = e.get("PLAYER_EVENT", "")
+
+
+def save(name, data):
+    tmp = os.path.join(d, name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, os.path.join(d, name + ".json"))
+
+
+def lines(k):
+    return [x for x in e.get(k, "").split("\n") if x]
+
+
+if ev == "track_changed":
+    save("track", {
+        "id": e.get("TRACK_ID", ""),
+        "type": e.get("ITEM_TYPE", "Track"),
+        "name": e.get("NAME", ""),
+        "artists": lines("ARTISTS") or [e.get("SHOW_NAME", "")],
+        "album": e.get("ALBUM", e.get("SHOW_NAME", "")),
+        "covers": lines("COVERS"),
+        "duration_ms": int(e.get("DURATION_MS") or 0),
+    })
+elif ev in ("playing", "paused", "seeked", "position_correction"):
+    prev = {}
+    try:
+        prev = json.load(open(os.path.join(d, "state.json")))
+    except Exception:
+        pass
+    playing = ev == "playing" or (ev != "paused" and prev.get("playing", False))
+    save("state", {"playing": playing, "position_ms": int(e.get("POSITION_MS") or 0), "at": time.time()})
+elif ev in ("stopped", "session_disconnected"):
+    save("state", {"playing": False, "stopped": True, "position_ms": 0, "at": time.time()})
+elif ev == "volume_changed":
+    save("volume", {"volume": int(e.get("VOLUME") or 0) * 100 // 65535, "at": time.time()})
+elif ev == "session_client_changed":
+    save("client", {"name": e.get("CLIENT_NAME", ""), "at": time.time()})
