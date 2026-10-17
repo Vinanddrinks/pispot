@@ -83,6 +83,22 @@ def parse_lrc(text):
     return sorted(out)
 
 
+# Credit lines some uploads prepend ("作词 : …", "Lyrics by …")
+CREDIT = re.compile(r"^\s*(作词|作詞|作曲|编曲|編曲|词|曲|Lyrics?( by)?|Composer|Composed by|Written by|"
+                    r"Lời|Nhạc|작사|작곡|편곡)\s*[:：]", re.I)
+
+
+def lrc_penalty(c, dur):
+    """Lower is better: prefer clean, original-language uploads of the right length.
+    Translated uploads interleave a second line under the same timestamp."""
+    text = c.get("syncedLyrics") or c.get("plainLyrics") or ""
+    lines = parse_lrc(text) if c.get("syncedLyrics") else [(0, l) for l in text.splitlines()]
+    stamps = [ms for ms, _ in lines]
+    dupes = len(stamps) - len(set(stamps)) if c.get("syncedLyrics") else 0
+    credits = sum(1 for _, l in lines if CREDIT.match(l))
+    return dupes * 3 + credits * 2 + text.count("→") * 3 + abs((c.get("duration") or dur) - dur) / 5
+
+
 def has_cjk(text):
     return any("぀" <= c <= "鿿" or "가" <= c <= "힯" for c in text)
 
@@ -131,24 +147,25 @@ class Info:
             cands.append(http_json("https://lrclib.net/api/get?" + urllib.parse.urlencode(exact)))
         except Exception:
             pass
-        if not (cands and cands[0].get("syncedLyrics")):
-            try:
-                found = http_json("https://lrclib.net/api/search?" + urllib.parse.urlencode(q))
-                if dur:
-                    found = [r for r in found if abs((r.get("duration") or 0) - dur) <= 4] or found
-                cands += sorted(found, key=lambda r: not r.get("syncedLyrics"))
-            except Exception:
-                pass
-        for c in cands:
-            if c.get("instrumental"):
-                return None  # let the artist bio take the panel
-            if c.get("syncedLyrics"):
-                lines = parse_lrc(c["syncedLyrics"])
-                if lines:
-                    return {"kind": "synced", "lines": lines}
-        for c in cands:
-            if c.get("plainLyrics"):
-                return {"kind": "plain", "text": c["plainLyrics"].strip()}
+        try:
+            cands += http_json("https://lrclib.net/api/search?" + urllib.parse.urlencode(q))
+        except Exception:
+            pass
+        if dur:
+            cands = [c for c in cands if abs((c.get("duration") or dur) - dur) <= 5] or cands
+        if any(c.get("instrumental") for c in cands[:1]):
+            return None  # let the artist bio take the panel
+        synced = [c for c in cands if c.get("syncedLyrics")]
+        if synced:
+            best = min(synced, key=lambda c: lrc_penalty(c, dur))
+            lines = [(ms, l) for ms, l in parse_lrc(best["syncedLyrics"]) if not CREDIT.match(l)]
+            if lines:
+                return {"kind": "synced", "lines": lines}
+        plain = [c for c in cands if c.get("plainLyrics")]
+        if plain:
+            best = min(plain, key=lambda c: lrc_penalty(c, dur))
+            text = "\n".join(l for l in best["plainLyrics"].splitlines() if not CREDIT.match(l.strip()))
+            return {"kind": "plain", "text": text.strip()}
         return None
 
     def _bio(self, artist):
@@ -402,14 +419,15 @@ class Display:
                 y, i = anchor, 0
             else:
                 y, i = anchor, cur
-            while i < len(lines) and y < body.bottom:
+            # only whole lines: stop before one would be cut by the panel edge
+            while i < len(lines) and y + height(i) - gap <= body.bottom:
                 for s in block(i):
                     S.blit(s, (body.x, y))
                     y += s.get_height()
                 y += gap
                 i += 1
             y, i = anchor, (cur if cur >= 0 else 0) - 1
-            while i >= 0 and y > body.y:
+            while i >= 0 and y - height(i) >= body.y:
                 y -= height(i)
                 yy = y
                 for s in block(i):
