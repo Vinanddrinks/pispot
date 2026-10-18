@@ -4,3 +4,4 @@ build/
 mnt/
 *.png
 __pycache__/
+!docs/screenshots/*.png

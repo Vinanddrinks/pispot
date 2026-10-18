@@ -1,5 +1,20 @@
 # pispot: Raspberry Pi Spotify Connect speaker
 
+<p align="center">
+  <img src="docs/screenshots/synced-lyrics.png" alt="Now-playing screen with synced Japanese lyrics" width="100%">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/artist-bio.png" alt="Artist summary from Wikipedia when a track has no lyrics"></td>
+    <td width="50%"><img src="docs/screenshots/idle.png" alt="Idle screen with clock and speaker name"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>No lyrics? The artist's Wikipedia summary instead</sub></td>
+    <td align="center"><sub>Idle: clock and speaker name</sub></td>
+  </tr>
+</table>
+
 Unattended Raspberry Pi OS Lite (arm64) build that turns a Raspberry Pi into a
 dedicated Spotify Connect speaker on your LAN. It plays over HDMI (or any ALSA
 output) and shows a full-screen now-playing display on the same screen. Build
@@ -38,6 +53,7 @@ switch to any other output.
 | `tools/deploy.sh` | push `display/` and `pispot-config` to a running speaker (unlocks/relocks overlayfs) |
 | `tools/preview.sh` | render a frame locally with real lyrics/bio lookups |
 | `tools/screenshot.sh` | grab what the speaker's screen shows right now |
+| `tools/make-screenshots.sh` | regenerate the README screenshots from free content |
 
 ## Usage
 
@@ -102,3 +118,19 @@ plane that the vc4 scanout showed as black.
   ([librespot#1583](https://github.com/librespot-org/librespot/issues/1583)).
 - **Lyrics:** coverage depends on LRCLIB. Unsynced lyrics scroll with the song,
   and when there are none the panel shows the artist bio instead.
+
+## License and credits
+
+pispot's own code is under the [MIT license](LICENSE). It is built on librespot,
+raspotify, Raspberry Pi OS, pygame, Noto CJK and many other projects. Lyrics come
+from LRCLIB and artist summaries from Wikipedia (CC BY-SA 4.0). See
+[CREDITS.md](CREDITS.md) for every project, its license and what it is used for.
+pispot is not affiliated with Spotify or Raspberry Pi Ltd.
+
+The screenshots are rendered with `tools/make-screenshots.sh` and use only free
+content: "Monkeys Spinning Monkeys" by Kevin MacLeod
+([incompetech.com](https://incompetech.com)), licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the traditional
+Japanese song 「さくらさくら」 (1888 lyrics, public domain, demo timings); the
+Wikipedia summary of Kevin MacLeod (CC BY-SA 4.0); and cover art drawn by the
+script.

@@ -403,7 +403,10 @@ class Display:
         S, u = self.screen, self.u
         data = self.info.data
         kind = (data or {}).get("kind")
-        head = {"synced": "LYRICS", "plain": "LYRICS", "bio": "ABOUT THE ARTIST"}.get(kind)
+        # name the source on screen (Wikipedia text is CC BY-SA and needs it)
+        src = (data or {}).get("source", "LRCLIB")
+        head = {"synced": f"LYRICS  ·  {src}", "plain": f"LYRICS  ·  {src}",
+                "bio": "ABOUT THE ARTIST  ·  WIKIPEDIA, CC BY-SA 4.0"}.get(kind)
         if data is None:
             head = "LOOKING UP LYRICS…"
         if head:
@@ -488,8 +491,15 @@ def main():
     if len(sys.argv) > 2 and sys.argv[1] == "--render":
         W, H = map(int, (sys.argv[3] if len(sys.argv) > 3 else "1920x1080").split("x"))
         d = Display(W, H)
+        lrc = os.environ.get("NP_LYRICS")  # demos/screenshots: this .lrc instead of LRCLIB
+        if lrc:
+            lines = parse_lrc(open(lrc, encoding="utf-8").read())
+            src = os.environ.get("NP_LYRICS_SOURCE", "LOCAL FILE")
+            d.info._lyrics = lambda track: {"kind": "synced", "lines": lines, "source": src}
         d.frame(time.time())
         for _ in range(150):  # wait up to 15 s for cover + lyrics/bio
+            if not load("track"):
+                break  # idle screen: nothing to fetch
             if d.covers.img is not None and d.info.data is not None:
                 break
             time.sleep(0.1)
